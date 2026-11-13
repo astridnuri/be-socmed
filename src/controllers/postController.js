@@ -6,7 +6,7 @@ const { deleteFile, deleteUpload } = fileUtil;
 // Query dasar feed. Parameter pertama (?) = id viewer, NULL kalau guest.
 const POST_SELECT = `
   SELECT
-    p.id, p.content, p.image, p.created_at, p.updated_at,
+    p.id, p.content, p.image, p.location, p.created_at, p.updated_at,
     u.id AS user_id, u.name AS user_name, u.avatar AS user_avatar,
     (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS likes_count,
     (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comments_count,
@@ -21,6 +21,7 @@ const formatPost = (r) => ({
   id: r.id,
   content: r.content,
   image: r.image,
+  location: r.location,
   created_at: r.created_at,
   updated_at: r.updated_at,
   user: { id: r.user_id, name: r.user_name, avatar: r.user_avatar },
@@ -33,13 +34,30 @@ const getPosts = async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
     const cursor = parseInt(req.query.cursor, 10);
+    const requestedUserId = req.query.userId;
+    let userId = null;
+    if (requestedUserId !== undefined) {
+      if (
+        typeof requestedUserId !== "string" ||
+        !/^[1-9]\d*$/.test(requestedUserId) ||
+        !Number.isSafeInteger(Number(requestedUserId))
+      ) {
+        return res.status(400).json({ message: "Invalid user ID" });
+      }
+      userId = Number(requestedUserId);
+    }
 
     const params = [req.user?.id ?? null];
-    let where = "";
+    const filters = [];
+    if (userId !== null) {
+      filters.push("p.user_id = ?");
+      params.push(userId);
+    }
     if (Number.isInteger(cursor) && cursor > 0) {
-      where = "WHERE p.id < ?";
+      filters.push("p.id < ?");
       params.push(cursor);
     }
+    const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
     params.push(limit + 1); // ambil 1 lebih banyak untuk tahu apakah masih ada halaman berikutnya
 
     const [rows] = await pool.query(
@@ -62,6 +80,7 @@ const getPosts = async (req, res, next) => {
 const createPost = async (req, res, next) => {
   try {
     const content = req.body.content || null; // "" -> NULL
+    const location = req.body.location?.trim() || null;
 
     if (!content && !req.file) {
       return res.status(400).json({
@@ -73,8 +92,8 @@ const createPost = async (req, res, next) => {
     const image = req.file ? `/uploads/posts/${req.file.filename}` : null;
 
     const [result] = await pool.query(
-      "INSERT INTO posts (user_id, content, image) VALUES (?, ?, ?)",
-      [req.user.id, content, image]
+      "INSERT INTO posts (user_id, content, image, location) VALUES (?, ?, ?, ?)",
+      [req.user.id, content, image, location]
     );
 
     // Ambil ulang dengan query yang sama agar bentuknya identik dengan item feed
@@ -96,7 +115,7 @@ const updatePost = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ message: "ID postingan tidak valid" });
+      return res.status(400).json({ message: "Invalid post ID" });
     }
 
     const content = req.body.content || null; // "" -> NULL
@@ -106,19 +125,19 @@ const updatePost = async (req, res, next) => {
       [id]
     );
     if (rows.length === 0) {
-      return res.status(404).json({ message: "Postingan tidak ditemukan" });
+      return res.status(404).json({ message: "Post not found" });
     }
     if (rows[0].user_id !== req.user.id) {
       return res
         .status(403)
-        .json({ message: "Anda tidak berhak mengedit postingan ini" });
+        .json({ message: "You're unauthorized to edit this post" });
     }
 
     // Postingan tanpa gambar harus tetap punya teks
     if (!content && !rows[0].image) {
       return res.status(400).json({
-        message: "Validasi gagal",
-        errors: { content: "Teks tidak boleh kosong karena postingan ini tidak memiliki gambar" },
+        message: "Validation failed",
+        errors: { content: "Post without image cannot be empty" },
       });
     }
 
@@ -129,7 +148,7 @@ const updatePost = async (req, res, next) => {
         [content, id, req.user.id]
       );
       if (result.affectedRows === 0) {
-        return res.status(404).json({ message: "Postingan tidak ditemukan" });
+        return res.status(404).json({ message: "Post not found" });
       }
     }
 
@@ -139,7 +158,7 @@ const updatePost = async (req, res, next) => {
     ]);
 
     return res.json({
-      message: "Postingan berhasil diperbarui",
+      message: "Post updated",
       post: formatPost(updated[0]),
     });
   } catch (err) {

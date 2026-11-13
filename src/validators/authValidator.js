@@ -13,14 +13,14 @@ const registerSchema = Joi.object({
     "string.max": "Email max. 150 characters",
     "any.required": "Email is required",
   }),
-  password: Joi.string().min(8).max(72).required().messages({
+  password: Joi.string().min(6).max(72).required().messages({
     "string.empty": "Password is required",
-    "string.min": "Password min. 8 characters",
+    "string.min": "Password min. 6 characters",
     "string.max": "Password min. 72 characters",
     "any.required": "Password is required",
   }),
   confirmPassword: Joi.any().valid(Joi.ref("password")).required().messages({
-    "any.only": "Unmatched password confirmation",
+    "any.only": "Password confirmation doesn't match",
     "any.required": "Password confirmation is required",
   }),
 });
@@ -31,9 +31,9 @@ const loginSchema = Joi.object({
     "string.email": "Invalid email format",
     "any.required": "Email is required",
   }),
-  password: Joi.string().min(8).required().messages({
-    "string.empty": "Password is requiredwajib diisi",
-    "string.min": "Password min. 8 characters",
+  password: Joi.string().min(6).required().messages({
+    "string.empty": "Password is required",
+    "string.min": "Password min. 6 characters",
     "any.required": "Password is required",
   }),
 });

@@ -5,7 +5,12 @@ const { deleteFile, deleteUpload } = fileUtil;
 
 const COMMENT_SELECT = `
   SELECT
-    c.id, c.post_id, c.comment, c.image, c.created_at, updated_at,
+    c.id, c.post_id, c.parent_comment_id, c.comment, c.image, c.created_at, updated_at,
+    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.id) AS likes_count,
+    EXISTS(
+      SELECT 1 FROM comment_likes cl2
+      WHERE cl2.comment_id = c.id AND cl2.user_id = ?
+    ) AS liked_by_me,
     u.id AS user_id, u.name AS user_name, u.avatar AS user_avatar
   FROM comments c
   JOIN users u ON u.id = c.user_id
@@ -14,8 +19,11 @@ const COMMENT_SELECT = `
 const formatComment = (r) => ({
   id: r.id,
   post_id: r.post_id,
+  parent_comment_id: r.parent_comment_id,
   comment: r.comment,
   image: r.image,
+  likes_count: Number(r.likes_count),
+  liked_by_me: Boolean(r.liked_by_me),
   created_at: r.created_at,
   updated_at: r.updated_at,
   user: { id: r.user_id, name: r.user_name, avatar: r.user_avatar },
@@ -38,7 +46,7 @@ const getComments = async (req, res, next) => {
     // Terlama di atas, terbaru di bawah (urutan percakapan)
     const [rows] = await pool.query(
       `${COMMENT_SELECT} WHERE c.post_id = ? ORDER BY c.id ASC`,
-      [postId]
+      [req.user.id, postId]
     );
 
     return res.json({ comments: rows.map(formatComment) });
@@ -67,6 +75,18 @@ const createComment = async (req, res, next) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
+    const parentCommentId = req.body.parent_comment_id ?? null;
+    if (parentCommentId !== null) {
+      const [parents] = await pool.query(
+        "SELECT id FROM comments WHERE id = ? AND post_id = ? AND parent_comment_id IS NULL LIMIT 1",
+        [parentCommentId, postId]
+      );
+      if (parents.length === 0) {
+        await discardUpload();
+        return res.status(400).json({ message: "Invalid parent comment" });
+      }
+    }
+
     const comment = req.body.comment || null; // "" -> NULL
     if (!comment && !req.file) {
       return res.status(400).json({
@@ -78,11 +98,12 @@ const createComment = async (req, res, next) => {
     const image = req.file ? `/uploads/comments/${req.file.filename}` : null;
 
     const [result] = await pool.query(
-      "INSERT INTO comments (post_id, user_id, comment, image) VALUES (?, ?, ?, ?)",
-      [postId, req.user.id, comment, image]
+      "INSERT INTO comments (post_id, user_id, parent_comment_id, comment, image) VALUES (?, ?, ?, ?, ?)",
+      [postId, req.user.id, parentCommentId, comment, image]
     );
 
     const [rows] = await pool.query(`${COMMENT_SELECT} WHERE c.id = ?`, [
+      req.user.id,
       result.insertId,
     ]);
     const [[{ total }]] = await pool.query(
@@ -109,7 +130,7 @@ const updateComment = async (req, res, next) => {
       !Number.isInteger(postId) || postId < 1 ||
       !Number.isInteger(commentId) || commentId < 1
     ) {
-      return res.status(400).json({ message: "ID tidak valid" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
     const comment = req.body.comment || null; // "" -> NULL
@@ -120,20 +141,20 @@ const updateComment = async (req, res, next) => {
       [commentId, postId]
     );
     if (rows.length === 0) {
-      return res.status(404).json({ message: "Komentar tidak ditemukan" });
+      return res.status(404).json({ message: "Comment not found" });
     }
     if (rows[0].user_id !== req.user.id) {
       return res
         .status(403)
-        .json({ message: "Anda tidak berhak mengedit komentar ini" });
+        .json({ message: "You're unauthorized to edit this comment" });
     }
 
     // Komentar tanpa gambar harus tetap punya teks
     if (!comment && !rows[0].image) {
       return res.status(400).json({
-        message: "Validasi gagal",
+        message: "Validation failed",
         errors: {
-          comment: "Komentar tidak boleh kosong karena tidak memiliki gambar",
+          comment: "Comment without image cannot be empty",
         },
       });
     }
@@ -145,16 +166,17 @@ const updateComment = async (req, res, next) => {
         [comment, commentId, req.user.id]
       );
       if (result.affectedRows === 0) {
-        return res.status(404).json({ message: "Komentar tidak ditemukan" });
+        return res.status(404).json({ message: "Comment not found" });
       }
     }
 
     const [updated] = await pool.query(`${COMMENT_SELECT} WHERE c.id = ?`, [
+      req.user.id,
       commentId,
     ]);
 
     return res.json({
-      message: "Komentar berhasil diperbarui",
+      message: "Comment updated",
       comment: formatComment(updated[0]),
     });
   } catch (err) {
@@ -174,7 +196,7 @@ const deleteComment = async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      "SELECT user_id, image FROM comments WHERE id = ? LIMIT 1",
+      "SELECT id, user_id, image, parent_comment_id FROM comments WHERE id = ? AND post_id = ? LIMIT 1",
       [commentId, postId]
     );
     if (rows.length === 0) {
@@ -186,24 +208,26 @@ const deleteComment = async (req, res, next) => {
         .json({ message: "You cannot delete this comment" });
     }
 
-    // Catat gambar komentar sebelum dihapus. Barisnya ikut terhapus lewat
-    // ON DELETE CASCADE, tapi filenya di disk tidak.
-    // const [commentImages] = await pool.query(
-    //   "SELECT image FROM comments WHERE post_id = ? AND image IS NOT NULL",
-    //   [id]
-    // );
+    const commentsToDelete = [rows[0]];
+    if (rows[0].parent_comment_id === null) {
+      const [replies] = await pool.query(
+        "SELECT id, image FROM comments WHERE parent_comment_id = ? AND post_id = ?",
+        [commentId, postId]
+      );
+      commentsToDelete.push(...replies);
+    }
 
-    
-    // user_id di WHERE sebagai pengaman kedua
+    const commentIds = commentsToDelete.map((comment) => comment.id);
+    const placeholders = commentIds.map(() => "?").join(", ");
     const [result] = await pool.query(
-      "DELETE FROM comments WHERE id = ? AND user_id = ?",
-      [commentId, req.user.id]
+      `DELETE FROM comments WHERE post_id = ? AND id IN (${placeholders})`,
+      [postId, ...commentIds]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Comment not found" });
     }
 
-    await deleteUpload(rows[0].image); // buang file gambar komentar dari disk
+    await Promise.all(commentsToDelete.map((comment) => deleteUpload(comment.image)));
 
     const [[{ total }]] = await pool.query(
       "SELECT COUNT(*) AS total FROM comments WHERE post_id = ?",
@@ -219,4 +243,52 @@ const deleteComment = async (req, res, next) => {
   }
 };
 
-export default { getComments, createComment, updateComment, deleteComment };
+const toggleLike = async (req, res, next) => {
+  try {
+    const postId = Number(req.params.id);
+    const commentId = Number(req.params.commentId);
+    if (
+      !Number.isInteger(postId) || postId < 1 ||
+      !Number.isInteger(commentId) || commentId < 1
+    ) {
+      return res.status(400).json({ message: "Invalid ID" });
+    }
+
+    const [comments] = await pool.query(
+      "SELECT id FROM comments WHERE id = ? AND post_id = ? LIMIT 1",
+      [commentId, postId]
+    );
+    if (comments.length === 0) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const [deleted] = await pool.query(
+      "DELETE FROM comment_likes WHERE comment_id = ? AND user_id = ?",
+      [commentId, req.user.id]
+    );
+
+    let liked = false;
+    if (deleted.affectedRows === 0) {
+      try {
+        await pool.query(
+          "INSERT INTO comment_likes (comment_id, user_id) VALUES (?, ?)",
+          [commentId, req.user.id]
+        );
+      } catch (err) {
+        if (err.code !== "ER_DUP_ENTRY") throw err;
+      }
+      liked = true;
+    }
+
+    const [[{ total }]] = await pool.query(
+      "SELECT COUNT(*) AS total FROM comment_likes WHERE comment_id = ?",
+      [commentId]
+    );
+
+    return res.json({ liked, likes_count: Number(total) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export default { getComments, createComment, updateComment, deleteComment, toggleLike };

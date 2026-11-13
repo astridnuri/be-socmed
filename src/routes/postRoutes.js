@@ -48,5 +48,10 @@ router.put(
   commentController.updateComment
 );
 router.delete("/:id/comments/:commentId", requireAuth, commentController.deleteComment);
+router.post(
+  "/:id/comments/:commentId/like",
+  requireAuth,
+  commentController.toggleLike
+);
 
 export default router;

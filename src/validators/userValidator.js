@@ -15,11 +15,11 @@ const updateProfileSchema = Joi.object({
   oldPassword: Joi.string().empty(""),
   newPassword: Joi.string()
     .empty("")
-    .min(8)
+    .min(6)
     .max(72)
     .invalid(Joi.ref("oldPassword"))
     .messages({
-      "string.min": "New password min. 8 characters",
+      "string.min": "New password min. 6 characters",
       "string.max": "New password max. 72 characters",
       "any.invalid": "New password cannot be the same as old password",
     }),

@@ -4,6 +4,27 @@ import fileUtil from "../utils/deleteFile.js";
 
 const { deleteFile, deleteUpload } = fileUtil;
 
+const getPublicProfile = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT id, name, avatar, bio FROM users WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    return res.json({ user: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const updateProfile = async (req, res, next) => {
   const discardUpload = () => deleteFile(req.file?.path);
 
@@ -76,4 +97,4 @@ const updateProfile = async (req, res, next) => {
   }
 };
 
-export default { updateProfile };
+export default { getPublicProfile, updateProfile };

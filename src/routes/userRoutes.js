@@ -22,4 +22,6 @@ router.put(
   userController.updateProfile   // 3. simpan
 );
 
+router.get("/:id", userController.getPublicProfile);
+
 export default router;

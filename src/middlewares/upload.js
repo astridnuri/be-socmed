@@ -29,7 +29,7 @@ const createUpload = (folder, maxSizeMB = 5) => {
     limits: { fileSize: maxSizeMB * 1024 * 1024, files: 1 },
     fileFilter: (req, file, cb) => {
       if (!ALLOWED[file.mimetype]) {
-        const err = new Error("Format gambar harus JPEG, JPG, PNG, atau WEBP");
+        const err = new Error("Image format must be JPEG, JPG, PNG, or WEBP");
         err.status = 400;
         err.field = file.fieldname;
         return cb(err);
