@@ -112,44 +112,61 @@ const createPost = async (req, res, next) => {
 };
 
 const updatePost = async (req, res, next) => {
+  let updateSaved = false;
+  const discardUpload = () => deleteFile(req.file?.path);
+
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
+      await discardUpload();
       return res.status(400).json({ message: "Invalid post ID" });
     }
 
     const content = req.body.content || null; // "" -> NULL
+    const removeImage = req.body.removeImage;
 
     const [rows] = await pool.query(
       "SELECT user_id, image, content FROM posts WHERE id = ? LIMIT 1",
       [id]
     );
     if (rows.length === 0) {
+      await discardUpload();
       return res.status(404).json({ message: "Post not found" });
     }
     if (rows[0].user_id !== req.user.id) {
+      await discardUpload();
       return res
         .status(403)
         .json({ message: "You're unauthorized to edit this post" });
     }
 
+    const image = req.file
+      ? `/uploads/posts/${req.file.filename}`
+      : removeImage
+        ? null
+        : rows[0].image;
+
     // Postingan tanpa gambar harus tetap punya teks
-    if (!content && !rows[0].image) {
+    if (!content && !image) {
+      await discardUpload();
       return res.status(400).json({
         message: "Validation failed",
         errors: { content: "Post without image cannot be empty" },
       });
     }
 
-    // Hanya sentuh updated_at kalau isinya memang berubah
-    if ((rows[0].content ?? null) !== content) {
+    const contentChanged = (rows[0].content ?? null) !== content;
+    const imageChanged = rows[0].image !== image;
+    if (contentChanged || imageChanged) {
       const [result] = await pool.query(
-        "UPDATE posts SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
-        [content, id, req.user.id]
+        "UPDATE posts SET content = ?, image = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        [content, image, id, req.user.id]
       );
       if (result.affectedRows === 0) {
+        await discardUpload();
         return res.status(404).json({ message: "Post not found" });
       }
+      updateSaved = true;
     }
 
     const [updated] = await pool.query(`${POST_SELECT} WHERE p.id = ?`, [
@@ -157,11 +174,14 @@ const updatePost = async (req, res, next) => {
       id,
     ]);
 
+    if (imageChanged) await deleteUpload(rows[0].image);
+
     return res.json({
       message: "Post updated",
       post: formatPost(updated[0]),
     });
   } catch (err) {
+    if (!updateSaved) await discardUpload();
     next(err);
   }
 };

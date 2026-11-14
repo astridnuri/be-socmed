@@ -27,7 +27,13 @@ router.post(
   validate(createPostSchema),
   postController.createPost
 );
-router.put("/:id", requireAuth, validate(updatePostSchema), postController.updatePost);
+router.put(
+  "/:id",
+  requireAuth,
+  uploadPostImage.single("image"),
+  validate(updatePostSchema),
+  postController.updatePost
+);
 router.delete("/:id", requireAuth, postController.deletePost);
 
 router.post("/:id/like", requireAuth, likeController.toggleLike);
@@ -44,6 +50,7 @@ router.post(
 router.put(
   "/:id/comments/:commentId",
   requireAuth,
+  uploadCommentImage.single("image"),
   validate(updateCommentSchema),
   commentController.updateComment
 );

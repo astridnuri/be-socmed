@@ -123,6 +123,9 @@ const createComment = async (req, res, next) => {
 };
 
 const updateComment = async (req, res, next) => {
+  let updateSaved = false;
+  const discardUpload = () => deleteFile(req.file?.path);
+
   try {
     const postId = Number(req.params.id);
     const commentId = Number(req.params.commentId);
@@ -130,10 +133,12 @@ const updateComment = async (req, res, next) => {
       !Number.isInteger(postId) || postId < 1 ||
       !Number.isInteger(commentId) || commentId < 1
     ) {
+      await discardUpload();
       return res.status(400).json({ message: "Invalid ID" });
     }
 
     const comment = req.body.comment || null; // "" -> NULL
+    const removeImage = req.body.removeImage;
 
     // post_id ikut dicek agar komentar benar-benar milik post di URL
     const [rows] = await pool.query(
@@ -141,16 +146,25 @@ const updateComment = async (req, res, next) => {
       [commentId, postId]
     );
     if (rows.length === 0) {
+      await discardUpload();
       return res.status(404).json({ message: "Comment not found" });
     }
     if (rows[0].user_id !== req.user.id) {
+      await discardUpload();
       return res
         .status(403)
         .json({ message: "You're unauthorized to edit this comment" });
     }
 
+    const image = req.file
+      ? `/uploads/comments/${req.file.filename}`
+      : removeImage
+        ? null
+        : rows[0].image;
+
     // Komentar tanpa gambar harus tetap punya teks
-    if (!comment && !rows[0].image) {
+    if (!comment && !image) {
+      await discardUpload();
       return res.status(400).json({
         message: "Validation failed",
         errors: {
@@ -159,15 +173,18 @@ const updateComment = async (req, res, next) => {
       });
     }
 
-    // Hanya sentuh updated_at kalau isinya memang berubah
-    if ((rows[0].comment ?? null) !== comment) {
+    const commentChanged = (rows[0].comment ?? null) !== comment;
+    const imageChanged = rows[0].image !== image;
+    if (commentChanged || imageChanged) {
       const [result] = await pool.query(
-        "UPDATE comments SET comment = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
-        [comment, commentId, req.user.id]
+        "UPDATE comments SET comment = ?, image = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        [comment, image, commentId, req.user.id]
       );
       if (result.affectedRows === 0) {
+        await discardUpload();
         return res.status(404).json({ message: "Comment not found" });
       }
+      updateSaved = true;
     }
 
     const [updated] = await pool.query(`${COMMENT_SELECT} WHERE c.id = ?`, [
@@ -175,11 +192,14 @@ const updateComment = async (req, res, next) => {
       commentId,
     ]);
 
+    if (imageChanged) await deleteUpload(rows[0].image);
+
     return res.json({
       message: "Comment updated",
       comment: formatComment(updated[0]),
     });
   } catch (err) {
+    if (!updateSaved) await discardUpload();
     next(err);
   }
 };

@@ -14,6 +14,7 @@ const updatePostSchema = Joi.object({
     "string.max": "Text max. 500 characters",
     "any.required": "Text is required",
   }),
+  removeImage: Joi.boolean().default(false),
 });
 
 export default { createPostSchema, updatePostSchema };

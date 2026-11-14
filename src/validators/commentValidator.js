@@ -12,6 +12,7 @@ const updateCommentSchema = Joi.object({
     "string.max": "Comment max. 300 characters",
     "any.required": "Comment is required",
   }),
+  removeImage: Joi.boolean().default(false),
 });
 
 export default { createCommentSchema, updateCommentSchema };
