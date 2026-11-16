@@ -58,10 +58,10 @@ const getPosts = async (req, res, next) => {
       params.push(cursor);
     }
     const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-    params.push(limit + 1); // ambil 1 lebih banyak untuk tahu apakah masih ada halaman berikutnya
+    params.push(limit + 1); // ambil 1 lebih banyak bwt cek apakah msh ada halaman berikutnya
 
     const [rows] = await pool.query(
-      `${POST_SELECT} ${where} ORDER BY p.id DESC LIMIT ?`,
+      `${POST_SELECT} ${where} ORDER BY p.id DESC LIMIT ?`, //post terbaru di atas
       params
     );
 
@@ -96,7 +96,7 @@ const createPost = async (req, res, next) => {
       [req.user.id, content, image, location]
     );
 
-    // Ambil ulang dengan query yang sama agar bentuknya identik dengan item feed
+    // Ambil ulang dengan query yang sama supaya bentuknya identik dengan item feed
     const [rows] = await pool.query(`${POST_SELECT} WHERE p.id = ?`, [
       req.user.id,
       result.insertId,
@@ -206,7 +206,7 @@ const deletePost = async (req, res, next) => {
         .json({ message: "You cannot delete this post" });
     }
 
-    // Catat gambar komentar sebelum dihapus. Barisnya ikut terhapus lewat
+    // Catat gambar komen sebelum dihapus. Barisnya ikut terhapus krn pakai
     // ON DELETE CASCADE, tapi filenya di disk tidak.
     const [commentImages] = await pool.query(
       "SELECT image FROM comments WHERE post_id = ? AND image IS NOT NULL",

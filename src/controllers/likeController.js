@@ -14,7 +14,7 @@ const toggleLike = async (req, res, next) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    // Coba hapus dulu. Kalau ada barisnya, berarti tadinya sudah like -> sekarang unlike.
+    // Coba hapus dulu. Klo ada barisnya, berarti sdh pernah like -> klo klik lg, jd unlike.
     const [del] = await pool.query(
       "DELETE FROM likes WHERE user_id = ? AND post_id = ?",
       [req.user.id, postId]

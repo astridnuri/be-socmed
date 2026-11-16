@@ -43,7 +43,7 @@ const getComments = async (req, res, next) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    // Terlama di atas, terbaru di bawah (urutan percakapan)
+    // Pertama di atas, trbaru di bawah (urutan chat)
     const [rows] = await pool.query(
       `${COMMENT_SELECT} WHERE c.post_id = ? ORDER BY c.id ASC`,
       [req.user.id, postId]
